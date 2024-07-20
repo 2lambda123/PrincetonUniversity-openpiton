@@ -414,7 +414,7 @@ set CHIP_RTL_IMPL_FILES [list \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/fifo_v3.sv"                      \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/shift_reg.sv"                    \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/lfsr_8bit.sv"                    \
-    "${ARIANE_ROOT}/common/submodules/common_cells/src/lfsr.sv"                    \
+    "${ARIANE_ROOT}/common/submodules/common_cells/src/lfsr.sv"                         \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/lzc.sv"                          \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/exp_backoff.sv"                  \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/rr_arb_tree.sv"                  \
@@ -422,7 +422,7 @@ set CHIP_RTL_IMPL_FILES [list \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/cdc_2phase.sv"                   \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/unread.sv"                       \
     "${ARIANE_ROOT}/common/submodules/common_cells/src/popcount.sv"                     \
-    "${ARIANE_ROOT}/corev_apu/axi_mem_if/src/axi2mem.sv"                        \
+    "${ARIANE_ROOT}/corev_apu/axi_mem_if/src/axi2mem.sv"                                \
     "${ARIANE_ROOT}/corev_apu/src/tech_cells_generic/src/fpga/tc_clk_xilinx.sv"         \
     "${ARIANE_ROOT}/corev_apu/src/tech_cells_generic/src/fpga/tc_sram_xilinx.sv"        \
     "${ARIANE_ROOT}/corev_apu/src/tech_cells_generic/src/deprecated/cluster_clk_cells.sv" \
@@ -452,7 +452,7 @@ set CHIP_RTL_IMPL_FILES [list \
     "${ARIANE_ROOT}/core/issue_stage.sv"                                   \
     "${ARIANE_ROOT}/core/load_unit.sv"                                     \
     "${ARIANE_ROOT}/core/load_store_unit.sv"                               \
-    "${ARIANE_ROOT}/core/lsu_bypass.sv"                               \
+    "${ARIANE_ROOT}/core/lsu_bypass.sv"                                    \
     "${ARIANE_ROOT}/core/mmu_sv39/mmu.sv"                                           \
     "${ARIANE_ROOT}/core/mult.sv"                                          \
     "${ARIANE_ROOT}/core/multiplier.sv"                                    \
@@ -488,8 +488,6 @@ set CHIP_RTL_IMPL_FILES [list \
     "${ARIANE_ROOT}/corev_apu/riscv-dbg/src/dmi_jtag_tap.sv"                    \
     "${ARIANE_ROOT}/corev_apu/openpiton/riscv_peripherals.sv"                       \
     "${ARIANE_ROOT}/corev_apu/openpiton/ariane_verilog_wrap.sv"                     \
-    "${ARIANE_ROOT}/corev_apu/openpiton/bootrom/baremetal/bootrom.sv"               \
-    "${ARIANE_ROOT}/corev_apu/openpiton/bootrom/linux/bootrom_linux.sv"             \
     "${ARIANE_ROOT}/corev_apu/rv_plic/rtl/rv_plic_target.sv"                    \
     "${ARIANE_ROOT}/corev_apu/rv_plic/rtl/rv_plic_gateway.sv"                   \
     "${ARIANE_ROOT}/corev_apu/rv_plic/rtl/plic_regmap.sv"                       \
