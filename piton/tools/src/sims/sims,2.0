@@ -912,6 +912,10 @@ sub regress
       } else {
           $cmd .= "-other_sim_build " ;
       }
+      $cmd .= "-ost1 " if $opt{ost1} ;
+      $cmd .= "-ariane " if $opt{ariane} ;
+      $cmd .= "-pico " if $opt{pico} ;
+      $cmd .= "-pico_het " if $opt{pico_het} ;
       $cmd .= "$buildargs " ;
       $cmd .= "-build_id=$build_id " ;
 
@@ -987,6 +991,10 @@ sub regress
             push (@cmd, "-other_sim_run") ;
           }
           push (@cmd, "-sys=${sys}") ;
+          push (@cmd, "-ost1") if $opt{ost1} ;
+          push (@cmd, "-ariane") if $opt{ariane} ;
+          push (@cmd, "-pico") if $opt{pico} ;
+          push (@cmd, "-pico_het") if $opt{pico_het} ;
           push (@cmd, "-build_id=${build_id}") ;
           push (@cmd, "-regress_id=${regress_id}") ;
           push (@cmd, "-alias=${dirname}") ;
@@ -2610,6 +2618,10 @@ sub parse_args
             'dmbr!',
             'dmbr_checker!',
             'oram!',
+            'ost1!',
+            'ariane!',
+            'pico!',
+            'pico_het!',
            );
 
   # print out all command line arguments + config arguments
