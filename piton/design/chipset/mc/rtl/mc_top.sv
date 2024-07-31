@@ -1,3 +1,4 @@
+// Modified by Barcelona Supercomputing Center on March 3rd, 2022
 // ========== Copyright Header Begin ============================================
 // Copyright (c) 2015 Princeton University
 // All rights reserved.
@@ -30,8 +31,9 @@
 `include "noc_axi4_bridge_define.vh"
 
 module mc_top (
-    output                          mc_ui_clk_sync_rst,
     input                           core_ref_clk,
+`ifdef PITON_FPGA_MC_DDR3
+    output                          mc_ui_clk_sync_rst,
 
     input   [`NOC_DATA_WIDTH-1:0]   mc_flit_in_data,
     input                           mc_flit_in_val,
@@ -40,6 +42,16 @@ module mc_top (
     output  [`NOC_DATA_WIDTH-1:0]   mc_flit_out_data,
     output                          mc_flit_out_val,
     input                           mc_flit_out_rdy,
+
+  `ifdef PITON_EXTRA_MEMS
+    input   [`PITON_EXTRA_MEMS * `NOC_DATA_WIDTH -1:0] mcx_flit_in_data,
+    input   [`PITON_EXTRA_MEMS-1:0]                    mcx_flit_in_val,
+    output  [`PITON_EXTRA_MEMS-1:0]                    mcx_flit_in_rdy,
+
+    output  [`PITON_EXTRA_MEMS * `NOC_DATA_WIDTH -1:0] mcx_flit_out_data,
+    output  [`PITON_EXTRA_MEMS-1:0]                    mcx_flit_out_val,
+    input   [`PITON_EXTRA_MEMS-1:0]                    mcx_flit_out_rdy,
+  `endif
 
     input                           uart_boot_en,
     
@@ -71,8 +83,21 @@ module mc_top (
     output [`DDR3_CS_WIDTH-1:0]     ddr_cs_n,
 `endif // endif NEXYSVIDEO_BOARD
 `ifdef PITONSYS_DDR4
+`ifdef PITONSYS_PCIE
+    input  [15:0] pci_express_x16_rxn,
+    input  [15:0] pci_express_x16_rxp,
+    output [15:0] pci_express_x16_txn,
+    output [15:0] pci_express_x16_txp,  
+    output [4:0] pcie_gpio,      
+    input  pcie_perstn,
+    input  pcie_refclk_n,
+    input  pcie_refclk_p,
+`endif // PITONSYS_PCIE
 `ifdef XUPP3R_BOARD
     output                          ddr_parity,
+`elsif ALVEO_BOARD
+    output                          ddr_parity,
+    output                          hbm_cattrip,
 `else
     inout [`DDR3_DM_WIDTH-1:0]      ddr_dm,
 `endif // XUPP3R_BOARD
@@ -82,8 +107,225 @@ module mc_top (
     output [`DDR3_ODT_WIDTH-1:0]    ddr_odt,
 
     output                          init_calib_complete_out,
+`endif // ifdef PITON_FPGA_MC_DDR3
+
+`ifdef PITON_NONCACH_MEM
+    input   [`NOC_DATA_WIDTH-1:0]   ncmem_flit_in_data,
+    input                           ncmem_flit_in_val ,
+    output                          ncmem_flit_in_rdy ,
+
+    output  [`NOC_DATA_WIDTH-1:0]   ncmem_flit_out_data,
+    output                          ncmem_flit_out_val ,
+    input                           ncmem_flit_out_rdy ,
+`endif // `ifdef PITON_NONCACH_MEM
+
     input                           sys_rst_n
 );
+
+localparam HBM_WIDTH = 256;
+localparam HBM_SIZE_LOG2 = 33; // 8GB
+localparam HBM_MCS_LOG2  = 0;  //  0 to disable "interleaving", 5 for 32 MC channels to participate in "interleaving"
+localparam HBM_MCS_ADDR  = 9;  // "interleaving" address position of MC channels in AXI address
+
+`ifdef PITON_NONCACH_MEM 
+ wire [`AXI4_ID_WIDTH     -1:0]     ncmem_axi_awid;
+ wire [`AXI4_ADDR_WIDTH   -1:0]     ncmem_axi_awaddr;
+ wire [`AXI4_LEN_WIDTH    -1:0]     ncmem_axi_awlen;
+ wire [`AXI4_SIZE_WIDTH   -1:0]     ncmem_axi_awsize;
+ wire [`AXI4_BURST_WIDTH  -1:0]     ncmem_axi_awburst;
+ wire                               ncmem_axi_awlock;
+ wire [`AXI4_CACHE_WIDTH  -1:0]     ncmem_axi_awcache;
+ wire [`AXI4_PROT_WIDTH   -1:0]     ncmem_axi_awprot;
+ wire [`AXI4_QOS_WIDTH    -1:0]     ncmem_axi_awqos;
+ wire [`AXI4_REGION_WIDTH -1:0]     ncmem_axi_awregion;
+ wire [`AXI4_USER_WIDTH   -1:0]     ncmem_axi_awuser;
+ wire                               ncmem_axi_awvalid;
+ wire                               ncmem_axi_awready;
+
+ wire  [`AXI4_ID_WIDTH     -1:0]    ncmem_axi_wid;
+ wire  [`AXI4_DATA_WIDTH   -1:0]    ncmem_axi_wdata;
+ wire  [`AXI4_STRB_WIDTH   -1:0]    ncmem_axi_wstrb;
+ wire                               ncmem_axi_wlast;
+ wire  [`AXI4_USER_WIDTH   -1:0]    ncmem_axi_wuser;
+ wire                               ncmem_axi_wvalid;
+ wire                               ncmem_axi_wready;
+
+ wire  [`AXI4_ID_WIDTH     -1:0]    ncmem_axi_arid;
+ wire  [`AXI4_ADDR_WIDTH   -1:0]    ncmem_axi_araddr;
+ wire  [`AXI4_LEN_WIDTH    -1:0]    ncmem_axi_arlen;
+ wire  [`AXI4_SIZE_WIDTH   -1:0]    ncmem_axi_arsize;
+ wire  [`AXI4_BURST_WIDTH  -1:0]    ncmem_axi_arburst;
+ wire                               ncmem_axi_arlock;
+ wire  [`AXI4_CACHE_WIDTH  -1:0]    ncmem_axi_arcache;
+ wire  [`AXI4_PROT_WIDTH   -1:0]    ncmem_axi_arprot;
+ wire  [`AXI4_QOS_WIDTH    -1:0]    ncmem_axi_arqos;
+ wire  [`AXI4_REGION_WIDTH -1:0]    ncmem_axi_arregion;
+ wire  [`AXI4_USER_WIDTH   -1:0]    ncmem_axi_aruser;
+ wire                               ncmem_axi_arvalid;
+ wire                               ncmem_axi_arready;
+
+ wire  [`AXI4_ID_WIDTH     -1:0]    ncmem_axi_rid;
+ wire  [`AXI4_DATA_WIDTH   -1:0]    ncmem_axi_rdata;
+ wire  [`AXI4_RESP_WIDTH   -1:0]    ncmem_axi_rresp;
+ wire                               ncmem_axi_rlast;
+ wire  [`AXI4_USER_WIDTH   -1:0]    ncmem_axi_ruser;
+ wire                               ncmem_axi_rvalid;
+ wire                               ncmem_axi_rready;
+
+ wire  [`AXI4_ID_WIDTH     -1:0]    ncmem_axi_bid;
+ wire  [`AXI4_RESP_WIDTH   -1:0]    ncmem_axi_bresp;
+ wire  [`AXI4_USER_WIDTH   -1:0]    ncmem_axi_buser;
+ wire                               ncmem_axi_bvalid;
+ wire                               ncmem_axi_bready;
+
+ noc_axi4_bridge #(
+  `ifdef PITON_RV64_PLATFORM
+    .SWAP_ENDIANESS (1),
+  `endif
+  `ifdef PITON_FPGA_MC_HBM
+    .AXI4_DAT_WIDTH_USED (HBM_WIDTH),
+    .ADDR_SWAP_LBITS(HBM_MCS_LOG2),
+    .ADDR_SWAP_MSB  (HBM_SIZE_LOG2),
+    .ADDR_SWAP_LSB  (HBM_MCS_ADDR),
+  `endif
+  .NUM_REQ_OUTSTANDING_LOG2 ($clog2(`PITON_NUM_TILES * 4))
+ ) noc_axi4_bridge_ncmem (
+    .clk                (core_ref_clk),  
+    .rst_n              (sys_rst_n), 
+    .uart_boot_en       (1'b0),
+    .phy_init_done      (sys_rst_n),
+
+    .src_bridge_vr_noc2_val(ncmem_flit_in_val),
+    .src_bridge_vr_noc2_dat(ncmem_flit_in_data),
+    .src_bridge_vr_noc2_rdy(ncmem_flit_in_rdy),
+
+    .bridge_dst_vr_noc3_val(ncmem_flit_out_val),
+    .bridge_dst_vr_noc3_dat(ncmem_flit_out_data),
+    .bridge_dst_vr_noc3_rdy(ncmem_flit_out_rdy),
+
+    .m_axi_awid(ncmem_axi_awid),
+    .m_axi_awaddr(ncmem_axi_awaddr),
+    .m_axi_awlen(ncmem_axi_awlen),
+    .m_axi_awsize(ncmem_axi_awsize),
+    .m_axi_awburst(ncmem_axi_awburst),
+    .m_axi_awlock(ncmem_axi_awlock),
+    .m_axi_awcache(ncmem_axi_awcache),
+    .m_axi_awprot(ncmem_axi_awprot),
+    .m_axi_awqos(ncmem_axi_awqos),
+    .m_axi_awregion(ncmem_axi_awregion),
+    .m_axi_awuser(ncmem_axi_awuser),
+    .m_axi_awvalid(ncmem_axi_awvalid),
+    .m_axi_awready(ncmem_axi_awready),
+
+    .m_axi_wid(ncmem_axi_wid),
+    .m_axi_wdata(ncmem_axi_wdata),
+    .m_axi_wstrb(ncmem_axi_wstrb),
+    .m_axi_wlast(ncmem_axi_wlast),
+    .m_axi_wuser(ncmem_axi_wuser),
+    .m_axi_wvalid(ncmem_axi_wvalid),
+    .m_axi_wready(ncmem_axi_wready),
+
+    .m_axi_bid(ncmem_axi_bid),
+    .m_axi_bresp(ncmem_axi_bresp),
+    .m_axi_buser(ncmem_axi_buser),
+    .m_axi_bvalid(ncmem_axi_bvalid),
+    .m_axi_bready(ncmem_axi_bready),
+
+    .m_axi_arid(ncmem_axi_arid),
+    .m_axi_araddr(ncmem_axi_araddr),
+    .m_axi_arlen(ncmem_axi_arlen),
+    .m_axi_arsize(ncmem_axi_arsize),
+    .m_axi_arburst(ncmem_axi_arburst),
+    .m_axi_arlock(ncmem_axi_arlock),
+    .m_axi_arcache(ncmem_axi_arcache),
+    .m_axi_arprot(ncmem_axi_arprot),
+    .m_axi_arqos(ncmem_axi_arqos),
+    .m_axi_arregion(ncmem_axi_arregion),
+    .m_axi_aruser(ncmem_axi_aruser),
+    .m_axi_arvalid(ncmem_axi_arvalid),
+    .m_axi_arready(ncmem_axi_arready),
+
+    .m_axi_rid(ncmem_axi_rid),
+    .m_axi_rdata(ncmem_axi_rdata),
+    .m_axi_rresp(ncmem_axi_rresp),
+    .m_axi_rlast(ncmem_axi_rlast),
+    .m_axi_ruser(ncmem_axi_ruser),
+    .m_axi_rvalid(ncmem_axi_rvalid),
+    .m_axi_rready(ncmem_axi_rready)
+);
+
+`ifndef PITON_FPGA_MC_DDR3
+  // NCMEM AXI stub for simulation
+  assign ncmem_axi_awready = 1'b1;
+  assign ncmem_axi_wready  = 1'b1;
+  assign ncmem_axi_arready = 1'b1;
+
+  localparam RVALID_DELAY_LOG = 0;
+  reg [RVALID_DELAY_LOG:0] ncmem_axi_rvalid_cnt;
+  reg ncmem_axi_rvalid_en;
+  reg [`AXI4_ID_WIDTH-1:0] ncmem_axi_rid_reg;
+  always @(posedge core_ref_clk)
+    if (~sys_rst_n) begin
+      ncmem_axi_rvalid_cnt <= {(RVALID_DELAY_LOG+1){1'b0}};
+      ncmem_axi_rvalid_en <= 1'b0;
+      ncmem_axi_rid_reg <= `AXI4_ID_WIDTH'h0;
+    end
+    else begin 
+           if (ncmem_axi_rvalid) begin
+             if (ncmem_axi_rready) begin
+               ncmem_axi_rvalid_cnt <= {(RVALID_DELAY_LOG+1){1'b0}};
+               ncmem_axi_rvalid_en <= 1'b0;
+             end
+           end
+           else if (ncmem_axi_rvalid_en) ncmem_axi_rvalid_cnt <= ncmem_axi_rvalid_cnt+1;
+           if (ncmem_axi_arvalid) begin
+             ncmem_axi_rvalid_cnt <= {{RVALID_DELAY_LOG{1'b0}}, 1'b1};
+             ncmem_axi_rvalid_en <= 1'b1;
+             ncmem_axi_rid_reg <= ncmem_axi_arid;
+           end
+    end
+  assign ncmem_axi_rvalid = ncmem_axi_rvalid_cnt[RVALID_DELAY_LOG];
+  assign ncmem_axi_rid    = ncmem_axi_rid_reg;
+  assign ncmem_axi_rdata  = {(`AXI4_DATA_WIDTH/64/2+1){64'hDEADBEEFFEEDC0DE}};
+  assign ncmem_axi_rresp  = 2'h0;
+  assign ncmem_axi_rlast  = ncmem_axi_rvalid;
+  assign ncmem_axi_ruser  = `AXI4_USER_WIDTH'h0;
+
+  localparam BVALID_DELAY_LOG = 0;
+  reg [BVALID_DELAY_LOG:0] ncmem_axi_bvalid_cnt;
+  reg ncmem_axi_bvalid_en;
+  reg [`AXI4_ID_WIDTH-1:0] ncmem_axi_bid_reg;
+  always @(posedge core_ref_clk)
+    if (~sys_rst_n) begin
+      ncmem_axi_bvalid_cnt <= {(BVALID_DELAY_LOG+1){1'b0}};
+      ncmem_axi_bvalid_en <= 1'b0;
+      ncmem_axi_bid_reg <= `AXI4_ID_WIDTH'h0;
+    end
+    else begin
+           if (ncmem_axi_bvalid) begin
+             if (ncmem_axi_bready) begin
+               ncmem_axi_bvalid_cnt <= {(BVALID_DELAY_LOG+1){1'b0}};
+               ncmem_axi_bvalid_en <= 1'b0;
+             end
+           end
+           else if (ncmem_axi_bvalid_en) ncmem_axi_bvalid_cnt <= ncmem_axi_bvalid_cnt+1;
+           if (ncmem_axi_wvalid & ncmem_axi_wlast) begin
+             ncmem_axi_bvalid_cnt <= {{BVALID_DELAY_LOG{1'b0}}, 1'b1};
+             ncmem_axi_bvalid_en <= 1'b1;
+             ncmem_axi_bid_reg <= ncmem_axi_wid;
+           end
+    end
+  assign ncmem_axi_bvalid  = ncmem_axi_bvalid_cnt[BVALID_DELAY_LOG];
+  assign ncmem_axi_bid     = ncmem_axi_bid_reg;
+  assign ncmem_axi_bresp   = 2'h0;
+  assign ncmem_axi_buser   = `AXI4_USER_WIDTH'h0;
+
+`endif // `ifndef PITON_FPGA_MC_DDR3
+`endif // `ifdef PITON_NONCACH_MEM 
+
+
+`ifdef PITON_FPGA_MC_DDR3
+
 reg     [31:0]                      delay_cnt;
 reg                                 ui_clk_syn_rst_delayed;
 wire                                init_calib_complete;
@@ -327,7 +569,7 @@ always @(posedge core_ref_clk) begin
 end
 
 always @(posedge core_ref_clk) begin
-    if (ui_clk_sync_rst)
+    if (ui_clk_sync_rst_r_r)
         ui_clk_syn_rst_delayed <= 1'b1;
     else begin
         ui_clk_syn_rst_delayed <= delay_cnt != 0;
@@ -755,8 +997,28 @@ assign noc_axi4_bridge_init_done = init_calib_complete;
 assign init_calib_complete_out  = init_calib_complete & ~ui_clk_syn_rst_delayed;
 `endif // PITONSYS_MEM_ZEROER
 
+// system memory base address from devices.xml, unaligned with memory size and thus is subtracted from access memory address
+//localparam MEM_BASE_UNALIGN = `AXI4_ADDR_WIDTH'h80000000;
+localparam MEM_BASE_UNALIGN = '0;
 
-noc_axi4_bridge noc_axi4_bridge  (
+noc_axi4_bridge #(
+  `ifdef PITON_RV64_PLATFORM
+    .SWAP_ENDIANESS (1),
+  `endif
+  `ifdef PITON_FPGA_MC_HBM
+    .AXI4_DAT_WIDTH_USED (HBM_WIDTH),
+    .ADDR_SWAP_LBITS(HBM_MCS_LOG2),
+    .ADDR_SWAP_MSB  (HBM_SIZE_LOG2),
+    .ADDR_SWAP_LSB  (HBM_MCS_ADDR),
+  `endif
+    .ADDR_OFFSET(MEM_BASE_UNALIGN),
+    .NUM_REQ_OUTSTANDING_LOG2 ($clog2(`PITON_NUM_TILES * 4))
+    // .NUM_REQ_MSHRID_LBIT (`L15_MSHR_ID_WIDTH),
+    // .NUM_REQ_MSHRID_BITS (`L15_THREADID_WIDTH),
+    // .NUM_REQ_YTHREADS (`PITON_Y_TILES),
+    // .NUM_REQ_XTHREADS (`PITON_X_TILES)
+)
+ noc_axi4_bridge  (
     .clk                (ui_clk                    ),  
     .rst_n              (~noc_axi4_bridge_rst      ), 
     .uart_boot_en       (uart_boot_en              ),
@@ -821,6 +1083,147 @@ noc_axi4_bridge noc_axi4_bridge  (
     .m_axi_rready(core_axi_rready)
 
 );
+
+
+`ifdef PITON_EXTRA_MEMS
+  // Multi-MC implementation
+  wire [`PITON_EXTRA_MEMS * `AXI4_ID_WIDTH     -1:0]   mcx_axi_awid;
+  wire [`PITON_EXTRA_MEMS * `AXI4_ADDR_WIDTH   -1:0]   mcx_axi_awaddr;
+  wire [`PITON_EXTRA_MEMS * `AXI4_LEN_WIDTH    -1:0]   mcx_axi_awlen;
+  wire [`PITON_EXTRA_MEMS * `AXI4_SIZE_WIDTH   -1:0]   mcx_axi_awsize;
+  wire [`PITON_EXTRA_MEMS * `AXI4_BURST_WIDTH  -1:0]   mcx_axi_awburst;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_awlock;
+  wire [`PITON_EXTRA_MEMS * `AXI4_CACHE_WIDTH  -1:0]   mcx_axi_awcache;
+  wire [`PITON_EXTRA_MEMS * `AXI4_PROT_WIDTH   -1:0]   mcx_axi_awprot;
+  wire [`PITON_EXTRA_MEMS * `AXI4_QOS_WIDTH    -1:0]   mcx_axi_awqos;
+  wire [`PITON_EXTRA_MEMS * `AXI4_REGION_WIDTH -1:0]   mcx_axi_awregion;
+  wire [`PITON_EXTRA_MEMS * `AXI4_USER_WIDTH   -1:0]   mcx_axi_awuser;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_awvalid;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_awready;
+
+  wire [`PITON_EXTRA_MEMS * `AXI4_ID_WIDTH     -1:0]   mcx_axi_wid;
+  wire [`PITON_EXTRA_MEMS * `AXI4_DATA_WIDTH   -1:0]   mcx_axi_wdata;
+  wire [`PITON_EXTRA_MEMS * `AXI4_STRB_WIDTH   -1:0]   mcx_axi_wstrb;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_wlast;
+  wire [`PITON_EXTRA_MEMS * `AXI4_USER_WIDTH   -1:0]   mcx_axi_wuser;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_wvalid;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_wready;
+
+  wire [`PITON_EXTRA_MEMS * `AXI4_ID_WIDTH     -1:0]   mcx_axi_arid;
+  wire [`PITON_EXTRA_MEMS * `AXI4_ADDR_WIDTH   -1:0]   mcx_axi_araddr;
+  wire [`PITON_EXTRA_MEMS * `AXI4_LEN_WIDTH    -1:0]   mcx_axi_arlen;
+  wire [`PITON_EXTRA_MEMS * `AXI4_SIZE_WIDTH   -1:0]   mcx_axi_arsize;
+  wire [`PITON_EXTRA_MEMS * `AXI4_BURST_WIDTH  -1:0]   mcx_axi_arburst;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_arlock;
+  wire [`PITON_EXTRA_MEMS * `AXI4_CACHE_WIDTH  -1:0]   mcx_axi_arcache;
+  wire [`PITON_EXTRA_MEMS * `AXI4_PROT_WIDTH   -1:0]   mcx_axi_arprot;
+  wire [`PITON_EXTRA_MEMS * `AXI4_QOS_WIDTH    -1:0]   mcx_axi_arqos;
+  wire [`PITON_EXTRA_MEMS * `AXI4_REGION_WIDTH -1:0]   mcx_axi_arregion;
+  wire [`PITON_EXTRA_MEMS * `AXI4_USER_WIDTH   -1:0]   mcx_axi_aruser;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_arvalid;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_arready;
+
+  wire [`PITON_EXTRA_MEMS * `AXI4_ID_WIDTH     -1:0]   mcx_axi_rid;
+  wire [`PITON_EXTRA_MEMS * `AXI4_DATA_WIDTH   -1:0]   mcx_axi_rdata;
+  wire [`PITON_EXTRA_MEMS * `AXI4_RESP_WIDTH   -1:0]   mcx_axi_rresp;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_rlast;
+  wire [`PITON_EXTRA_MEMS * `AXI4_USER_WIDTH   -1:0]   mcx_axi_ruser;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_rvalid;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_rready;
+
+  wire [`PITON_EXTRA_MEMS * `AXI4_ID_WIDTH     -1:0]   mcx_axi_bid;
+  wire [`PITON_EXTRA_MEMS * `AXI4_RESP_WIDTH   -1:0]   mcx_axi_bresp;
+  wire [`PITON_EXTRA_MEMS * `AXI4_USER_WIDTH   -1:0]   mcx_axi_buser;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_bvalid;
+  wire [`PITON_EXTRA_MEMS                      -1:0]   mcx_axi_bready;
+
+   // reassignment of vectorized multiple AXI buses to/from name-indexed ones for non-Shell OP build
+  `MCX_AXI(`PITON_EXTRA_MEMS)
+
+  genvar idx;
+  generate
+  for(idx=0; idx<`PITON_EXTRA_MEMS; idx=idx+1) begin: mcx_bridges
+  noc_axi4_bridge #(
+    .SWAP_ENDIANESS (1),
+    .AXI4_DAT_WIDTH_USED(HBM_WIDTH),
+    .ADDR_OFFSET(MEM_BASE_UNALIGN),
+    .ADDR_SWAP_LBITS(HBM_MCS_LOG2),
+    .ADDR_SWAP_MSB  (HBM_SIZE_LOG2),
+    .ADDR_SWAP_LSB  (HBM_MCS_ADDR),
+    .NUM_REQ_OUTSTANDING_LOG2 (4),
+    // for 2d-mesh having pure internal tiles (like 3x3), usage of either SRC_X/Y or INI_X/Y NOC fields as AXI ID results in Linux kernel panic
+    .NUM_REQ_YTHREADS (`PITON_EXTRA_MEMS == `PITON_NUM_TILES ? `PITON_Y_TILES : 1),
+    .NUM_REQ_XTHREADS (`PITON_EXTRA_MEMS == `PITON_NUM_TILES ? `PITON_X_TILES : 1),
+    .SRCXY_AS_AXIID   (1)
+  ) noc_axi4_bridge_mcx (
+    .clk                (core_ref_clk),
+    .rst_n              (sys_rst_n),
+    .uart_boot_en       (1'b0),
+    .phy_init_done      (sys_rst_n),
+
+    .src_bridge_vr_noc2_rdy(mcx_flit_in_rdy [idx]),
+    .src_bridge_vr_noc2_val(mcx_flit_in_val [idx]),
+    .src_bridge_vr_noc2_dat(mcx_flit_in_data[idx * `NOC_DATA_WIDTH +: `NOC_DATA_WIDTH]),
+
+    .bridge_dst_vr_noc3_rdy(mcx_flit_out_rdy [idx]),
+    .bridge_dst_vr_noc3_val(mcx_flit_out_val [idx]),
+    .bridge_dst_vr_noc3_dat(mcx_flit_out_data[idx * `NOC_DATA_WIDTH +: `NOC_DATA_WIDTH]),
+
+    .m_axi_awid      (mcx_axi_awid     [idx * `AXI4_ID_WIDTH     +: `AXI4_ID_WIDTH    ]),
+    .m_axi_awaddr    (mcx_axi_awaddr   [idx * `AXI4_ADDR_WIDTH   +: `AXI4_ADDR_WIDTH  ]),
+    .m_axi_awlen     (mcx_axi_awlen    [idx * `AXI4_LEN_WIDTH    +: `AXI4_LEN_WIDTH   ]),
+    .m_axi_awsize    (mcx_axi_awsize   [idx * `AXI4_SIZE_WIDTH   +: `AXI4_SIZE_WIDTH  ]),
+    .m_axi_awburst   (mcx_axi_awburst  [idx * `AXI4_BURST_WIDTH  +: `AXI4_BURST_WIDTH ]),
+    .m_axi_awlock    (mcx_axi_awlock   [idx                                           ]),
+    .m_axi_awcache   (mcx_axi_awcache  [idx * `AXI4_CACHE_WIDTH  +: `AXI4_CACHE_WIDTH ]),
+    .m_axi_awprot    (mcx_axi_awprot   [idx * `AXI4_PROT_WIDTH   +: `AXI4_PROT_WIDTH  ]),
+    .m_axi_awqos     (mcx_axi_awqos    [idx * `AXI4_QOS_WIDTH    +: `AXI4_QOS_WIDTH   ]),
+    .m_axi_awregion  (mcx_axi_awregion [idx * `AXI4_REGION_WIDTH +: `AXI4_REGION_WIDTH]),
+    .m_axi_awuser    (mcx_axi_awuser   [idx * `AXI4_USER_WIDTH   +: `AXI4_USER_WIDTH  ]),
+    .m_axi_awvalid   (mcx_axi_awvalid  [idx                                           ]),
+    .m_axi_awready   (mcx_axi_awready  [idx                                           ]),
+
+    .m_axi_wid       (mcx_axi_wid      [idx * `AXI4_ID_WIDTH     +: `AXI4_ID_WIDTH  ]),
+    .m_axi_wdata     (mcx_axi_wdata    [idx * `AXI4_DATA_WIDTH   +: `AXI4_DATA_WIDTH]),
+    .m_axi_wstrb     (mcx_axi_wstrb    [idx * `AXI4_STRB_WIDTH   +: `AXI4_STRB_WIDTH]),
+    .m_axi_wlast     (mcx_axi_wlast    [idx                                         ]),
+    .m_axi_wuser     (mcx_axi_wuser    [idx * `AXI4_USER_WIDTH   +: `AXI4_USER_WIDTH]),
+    .m_axi_wvalid    (mcx_axi_wvalid   [idx                                         ]),
+    .m_axi_wready    (mcx_axi_wready   [idx                                         ]),
+
+    .m_axi_bid       (mcx_axi_bid      [idx * `AXI4_ID_WIDTH     +: `AXI4_ID_WIDTH  ]),
+    .m_axi_bresp     (mcx_axi_bresp    [idx * `AXI4_RESP_WIDTH   +: `AXI4_RESP_WIDTH]),
+    .m_axi_buser     (mcx_axi_buser    [idx * `AXI4_USER_WIDTH   +: `AXI4_USER_WIDTH]),
+    .m_axi_bvalid    (mcx_axi_bvalid   [idx                                         ]),
+    .m_axi_bready    (mcx_axi_bready   [idx                                         ]),
+
+    .m_axi_arid      (mcx_axi_arid     [idx * `AXI4_ID_WIDTH     +: `AXI4_ID_WIDTH    ]),
+    .m_axi_araddr    (mcx_axi_araddr   [idx * `AXI4_ADDR_WIDTH   +: `AXI4_ADDR_WIDTH  ]),
+    .m_axi_arlen     (mcx_axi_arlen    [idx * `AXI4_LEN_WIDTH    +: `AXI4_LEN_WIDTH   ]),
+    .m_axi_arsize    (mcx_axi_arsize   [idx * `AXI4_SIZE_WIDTH   +: `AXI4_SIZE_WIDTH  ]),
+    .m_axi_arburst   (mcx_axi_arburst  [idx * `AXI4_BURST_WIDTH  +: `AXI4_BURST_WIDTH ]),
+    .m_axi_arlock    (mcx_axi_arlock   [idx                                           ]),
+    .m_axi_arcache   (mcx_axi_arcache  [idx * `AXI4_CACHE_WIDTH  +: `AXI4_CACHE_WIDTH ]),
+    .m_axi_arprot    (mcx_axi_arprot   [idx * `AXI4_PROT_WIDTH   +: `AXI4_PROT_WIDTH  ]),
+    .m_axi_arqos     (mcx_axi_arqos    [idx * `AXI4_QOS_WIDTH    +: `AXI4_QOS_WIDTH   ]),
+    .m_axi_arregion  (mcx_axi_arregion [idx * `AXI4_REGION_WIDTH +: `AXI4_REGION_WIDTH]),
+    .m_axi_aruser    (mcx_axi_aruser   [idx * `AXI4_USER_WIDTH   +: `AXI4_USER_WIDTH  ]),
+    .m_axi_arvalid   (mcx_axi_arvalid  [idx                                           ]),
+    .m_axi_arready   (mcx_axi_arready  [idx                                           ]),
+
+    .m_axi_rid       (mcx_axi_rid      [idx * `AXI4_ID_WIDTH     +: `AXI4_ID_WIDTH  ]),
+    .m_axi_rdata     (mcx_axi_rdata    [idx * `AXI4_DATA_WIDTH   +: `AXI4_DATA_WIDTH]),
+    .m_axi_rresp     (mcx_axi_rresp    [idx * `AXI4_RESP_WIDTH   +: `AXI4_RESP_WIDTH]),
+    .m_axi_rlast     (mcx_axi_rlast    [idx                                         ]),
+    .m_axi_ruser     (mcx_axi_ruser    [idx * `AXI4_USER_WIDTH   +: `AXI4_USER_WIDTH]),
+    .m_axi_rvalid    (mcx_axi_rvalid   [idx                                         ]),
+    .m_axi_rready    (mcx_axi_rready   [idx                                         ])
+  );
+  end
+  endgenerate
+
+`endif //ifdef PITON_EXTRA_MEMS
+
 
 `ifdef PITONSYS_MEM_ZEROER
 axi4_zeroer axi4_zeroer(
@@ -933,6 +1336,140 @@ axi4_zeroer axi4_zeroer(
 `endif // PITONSYS_MEM_ZEROER
 
 `ifdef PITONSYS_DDR4
+`ifdef PITONSYS_PCIE
+
+
+ wire [`AXI4_ADDR_WIDTH  -1:0]  pci2hbm_maxi_araddr;
+ wire [`AXI4_BURST_WIDTH -1:0]  pci2hbm_maxi_arburst;
+ wire [`AXI4_CACHE_WIDTH -1:0]  pci2hbm_maxi_arcache;
+ wire [`AXI4_LEN_WIDTH   -1:0]  pci2hbm_maxi_arlen;
+ wire                           pci2hbm_maxi_arlock;
+ wire [`AXI4_PROT_WIDTH  -1:0]  pci2hbm_maxi_arprot;
+ wire [`AXI4_QOS_WIDTH   -1:0]  pci2hbm_maxi_arqos;
+ wire                           pci2hbm_maxi_arready;
+ wire [`AXI4_SIZE_WIDTH  -1:0]  pci2hbm_maxi_arsize;
+ wire [`AXI4_USER_WIDTH  -1:0]  pci2hbm_maxi_aruser;
+ wire                           pci2hbm_maxi_arvalid;
+ wire [`AXI4_ADDR_WIDTH  -1:0]  pci2hbm_maxi_awaddr;
+ wire [`AXI4_BURST_WIDTH -1:0]  pci2hbm_maxi_awburst;
+ wire [`AXI4_CACHE_WIDTH -1:0]  pci2hbm_maxi_awcache;
+ wire [`AXI4_LEN_WIDTH   -1:0]  pci2hbm_maxi_awlen;
+ wire                           pci2hbm_maxi_awlock;
+ wire [`AXI4_PROT_WIDTH  -1:0]  pci2hbm_maxi_awprot;
+ wire [`AXI4_QOS_WIDTH   -1:0]  pci2hbm_maxi_awqos;
+ wire                           pci2hbm_maxi_awready;
+ wire [`AXI4_SIZE_WIDTH  -1:0]  pci2hbm_maxi_awsize;
+ wire [`AXI4_USER_WIDTH  -1:0]  pci2hbm_maxi_awuser;
+ wire                           pci2hbm_maxi_awvalid;
+ wire                           pci2hbm_maxi_bready;
+ wire [`AXI4_RESP_WIDTH  -1:0]  pci2hbm_maxi_bresp;
+ wire                           pci2hbm_maxi_bvalid;
+ wire [`AXI4_DATA_WIDTH  -1:0]  pci2hbm_maxi_rdata;
+ wire                           pci2hbm_maxi_rlast;
+ wire                           pci2hbm_maxi_rready;
+ wire [`AXI4_RESP_WIDTH  -1:0]  pci2hbm_maxi_rresp;
+ wire                           pci2hbm_maxi_rvalid;
+ wire [`AXI4_DATA_WIDTH  -1:0]  pci2hbm_maxi_wdata;
+ wire                           pci2hbm_maxi_wlast;
+ wire                           pci2hbm_maxi_wready;
+ wire [`AXI4_STRB_WIDTH  -1:0]  pci2hbm_maxi_wstrb;
+ wire                           pci2hbm_maxi_wvalid;
+
+// making address swapping for interleaving of HBM MC channels
+ wire [`AXI4_ADDR_WIDTH-1 : 0] pci2hbm_raddr;
+ wire [`AXI4_ADDR_WIDTH-1 : 0] pci2hbm_waddr;
+ generate
+  if (HBM_MCS_LOG2) begin
+    assign pci2hbm_raddr = {pci2hbm_maxi_araddr[`AXI4_ADDR_WIDTH-1 : HBM_SIZE_LOG2              ],
+                            pci2hbm_maxi_araddr[HBM_MCS_ADDR      +: HBM_MCS_LOG2               ], // Low address part moved up
+                            pci2hbm_maxi_araddr[HBM_SIZE_LOG2-1    : HBM_MCS_ADDR + HBM_MCS_LOG2], // High address part shifted down
+                            pci2hbm_maxi_araddr[HBM_MCS_ADDR -1    : 0]};
+    assign pci2hbm_waddr = {pci2hbm_maxi_awaddr[`AXI4_ADDR_WIDTH-1 : HBM_SIZE_LOG2              ],
+                            pci2hbm_maxi_awaddr[HBM_MCS_ADDR      +: HBM_MCS_LOG2               ], // Low address part moved up
+                            pci2hbm_maxi_awaddr[HBM_SIZE_LOG2-1    : HBM_MCS_ADDR + HBM_MCS_LOG2], // High address part shifted down
+                            pci2hbm_maxi_awaddr[HBM_MCS_ADDR -1    : 0]};
+  end
+  else begin
+    assign pci2hbm_raddr =  pci2hbm_maxi_araddr;
+    assign pci2hbm_waddr =  pci2hbm_maxi_awaddr;
+  end
+ endgenerate
+
+ meep_shell meep_shell
+       (
+         .*, // implicit connection of all AXI's at once
+
+        .mem_clk(ui_clk),
+        .mem_rst(ui_clk_sync_rst),
+        .mem_calib_complete(init_calib_complete),
+        .mem_refclk_clk_n(sys_clk_n),
+        .mem_refclk_clk_p(sys_clk_p),
+
+  `ifdef PITON_FPGA_MC_HBM
+        .hbm_cattrip(hbm_cattrip),
+        .pci2hbm_saxi_araddr  (pci2hbm_raddr),
+        .pci2hbm_saxi_awaddr  (pci2hbm_waddr),
+        .pci2hbm_saxi_arburst (pci2hbm_maxi_arburst),
+        .pci2hbm_saxi_arid    ('0),
+        .pci2hbm_saxi_arlen   (pci2hbm_maxi_arlen),
+        .pci2hbm_saxi_arready (pci2hbm_maxi_arready),
+        .pci2hbm_saxi_arsize  (pci2hbm_maxi_arsize),
+        .pci2hbm_saxi_arvalid (pci2hbm_maxi_arvalid),
+        .pci2hbm_saxi_awburst (pci2hbm_maxi_awburst),
+        .pci2hbm_saxi_awid    ('0),
+        .pci2hbm_saxi_awlen   (pci2hbm_maxi_awlen),
+        .pci2hbm_saxi_awready (pci2hbm_maxi_awready),
+        .pci2hbm_saxi_awsize  (pci2hbm_maxi_awsize),
+        .pci2hbm_saxi_awvalid (pci2hbm_maxi_awvalid),
+        .pci2hbm_saxi_bid     (),
+        .pci2hbm_saxi_bready  (pci2hbm_maxi_bready),
+        .pci2hbm_saxi_bresp   (pci2hbm_maxi_bresp),
+        .pci2hbm_saxi_bvalid  (pci2hbm_maxi_bvalid),
+        .pci2hbm_saxi_rdata   (pci2hbm_maxi_rdata),
+        .pci2hbm_saxi_rid     (),
+        .pci2hbm_saxi_rlast   (pci2hbm_maxi_rlast),
+        .pci2hbm_saxi_rready  (pci2hbm_maxi_rready),
+        .pci2hbm_saxi_rresp   (pci2hbm_maxi_rresp),
+        .pci2hbm_saxi_rvalid  (pci2hbm_maxi_rvalid),
+        .pci2hbm_saxi_wdata   (pci2hbm_maxi_wdata),
+        .pci2hbm_saxi_wlast   (pci2hbm_maxi_wlast),
+        .pci2hbm_saxi_wready  (pci2hbm_maxi_wready),
+        .pci2hbm_saxi_wstrb   (pci2hbm_maxi_wstrb),
+        .pci2hbm_saxi_wvalid  (pci2hbm_maxi_wvalid),
+  `else
+        .ddr4_sdram_c0_act_n(ddr_act_n),
+        .ddr4_sdram_c0_adr(ddr_addr),
+        .ddr4_sdram_c0_ba(ddr_ba),
+        .ddr4_sdram_c0_bg(ddr_bg),
+        .ddr4_sdram_c0_ck_c(ddr_ck_n),
+        .ddr4_sdram_c0_ck_t(ddr_ck_p),
+        .ddr4_sdram_c0_cke(ddr_cke),
+        .ddr4_sdram_c0_cs_n(ddr_cs_n),
+        .ddr4_sdram_c0_dq(ddr_dq),
+        .ddr4_sdram_c0_dqs_c(ddr_dqs_n),
+        .ddr4_sdram_c0_dqs_t(ddr_dqs_p),
+        .ddr4_sdram_c0_odt(ddr_odt),
+        .ddr4_sdram_c0_par(ddr_parity),
+        .ddr4_sdram_c0_reset_n(ddr_reset_n),
+  `endif
+
+        .sys_rst(~sys_rst_n),
+        .sys_clk(core_ref_clk),
+
+        .pci_express_x16_rxn(pci_express_x16_rxn),
+        .pci_express_x16_rxp(pci_express_x16_rxp),
+        .pci_express_x16_txn(pci_express_x16_txn),
+        .pci_express_x16_txp(pci_express_x16_txp),
+        .pcie_gpio(pcie_gpio),
+        .pcie_perstn(pcie_perstn),
+        .pcie_refclk_clk_n( pcie_refclk_n),
+        .pcie_refclk_clk_p( pcie_refclk_p)
+        );
+ assign m_axi_ruser    = `AXI4_USER_WIDTH'h0;
+ assign m_axi_buser    = `AXI4_USER_WIDTH'h0;
+ assign sram_axi_ruser = `AXI4_USER_WIDTH'h0;
+ assign sram_axi_buser = `AXI4_USER_WIDTH'h0;
+`else // PITONSYS_PCIE
 
 ddr4_axi4 ddr_axi4 (
   .sys_rst                   ( ~sys_rst_n                ),
@@ -1021,6 +1558,8 @@ ddr4_axi4 ddr_axi4 (
   .c0_ddr4_s_axi_rid(m_axi_rid),                    // output wire [15 : 0] c0_ddr4_s_axi_rid
   .c0_ddr4_s_axi_rdata(m_axi_rdata)                 // output wire [511 : 0] c0_ddr4_s_axi_rdata
 );
+
+`endif //PITONSYS_PCIE
 
 `else // PITONSYS_DDR4
 
@@ -1130,5 +1669,6 @@ mig_7series_axi4 u_mig_7series_axi4 (
 `endif  // PITONSYS_AXI4_MEM
 `endif  // PITON_PROTO_NO_MON
 `endif  // PITON_PROTO
+`endif  // PITON_FPGA_MC_DDR3
 
 endmodule 
